@@ -1,0 +1,9 @@
+[package]
+name = "albite-msl"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+albite-core = { path = "../core" }
+spirv-cross2 = "0.7.1"
+thiserror = "1"

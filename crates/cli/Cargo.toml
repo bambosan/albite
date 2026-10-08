@@ -1,0 +1,14 @@
+[package]
+name = "albite-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "albite"
+path = "src/main.rs"
+
+[dependencies]
+albite-core = { path = "../core" }
+albite-glsl = { path = "../glsl" }
+albite-msl = { path = "../msl" }
+albite-dxil = { path = "../dxil" }

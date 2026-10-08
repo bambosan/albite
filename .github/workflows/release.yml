@@ -1,0 +1,298 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  DXC_VERSION: v1.9.2609
+
+jobs:
+  version:
+    name: Validate version
+    runs-on: ubuntu-24.04
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate Cargo version against tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo_version="$(cargo metadata --format-version 1 --no-deps | node -e '
+            let input = "";
+            process.stdin.on("data", chunk => input += chunk);
+            process.stdin.on("end", () => {
+              const metadata = JSON.parse(input);
+              const package = metadata.packages.find(p => p.name === "albite-cli");
+              if (!package) {
+                console.error("albite-cli package not found");
+                process.exit(1);
+              }
+              process.stdout.write(package.version);
+            });
+          ')"
+
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          echo "Cargo version: $cargo_version"
+          echo "Tag version:   $tag_version"
+
+          if [[ "$cargo_version" != "$tag_version" ]]; then
+            echo "Version mismatch: tag must be v$cargo_version"
+            exit 1
+          fi
+
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: version
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: albite-linux-x86_64.tar.gz
+
+          - name: windows-x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive: albite-windows-x86_64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            ninja-build \
+            python3
+
+      - name: Show build tools
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          cmake --version
+          git --version
+          python3 --version || python --version
+
+      - name: Build
+        shell: bash
+        run: |
+          cargo build --release \
+            --package albite-cli \
+            --target "${{ matrix.target }}"
+
+      - name: Verify native shader dependencies on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          binary="target/${{ matrix.target }}/release/albite"
+
+          echo "Checking dynamic dependencies for shaderc / SPIRV-Cross..."
+          if ldd "$binary" | grep -Ei 'shaderc|spirv|spirv-cross|glslang'; then
+            echo "Unexpected dynamic shader dependency found."
+            echo "The release must not depend on system shaderc/SPIRV-Cross shared libraries."
+            exit 1
+          fi
+
+      - name: Download DXC runtime (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dxc dxc/extracted
+
+          asset="$(gh api \
+            "repos/microsoft/DirectXShaderCompiler/releases/tags/${DXC_VERSION}" \
+            --jq '.assets[].name' \
+            | grep -E '^linux_dxc_.*\.tar\.gz$' \
+            | grep -Ev 'arm64|aarch64|armv7' \
+            | head -n 1)"
+
+          test -n "$asset"
+          echo "DXC asset: $asset"
+
+          gh release download "$DXC_VERSION" \
+            --repo microsoft/DirectXShaderCompiler \
+            --pattern "$asset" \
+            --dir dxc
+
+          mkdir -p dist/albite
+
+          tarball="dxc/$asset"
+          tar -xzf "$tarball" -C dxc/extracted
+
+          find dxc/extracted -type f \( \
+            -name 'libdxcompiler.so' -o \
+            -name 'libdxil.so' \
+          \) -print
+
+          compiler="$(find dxc/extracted -type f -name 'libdxcompiler.so' | head -n 1)"
+          validator="$(find dxc/extracted -type f -name 'libdxil.so' | head -n 1)"
+
+          test -n "$compiler"
+          test -n "$validator"
+
+          cp "$compiler" dist/albite/libdxcompiler.so
+          cp "$validator" dist/albite/libdxil.so
+
+          license="$(find dxc/extracted -type f \( -iname 'LICENSE*' -o -iname 'license*' \) | head -n 1 || true)"
+          if [[ -n "$license" ]]; then
+            cp "$license" dist/albite/LICENSE-DXC.txt
+          fi
+
+      - name: Download DXC runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          New-Item -ItemType Directory -Force -Path dxc | Out-Null
+          New-Item -ItemType Directory -Force -Path dxc/extracted | Out-Null
+
+          $asset = gh api `
+            "repos/microsoft/DirectXShaderCompiler/releases/tags/$env:DXC_VERSION" `
+            --jq '.assets[].name' |
+            Where-Object { $_ -match '^dxc_.*\.zip$' -and $_ -notmatch 'arm64|aarch64' } |
+            Select-Object -First 1
+
+          if (-not $asset) {
+            throw 'Could not find the x86_64 Windows DXC release asset.'
+          }
+
+          Write-Host "DXC asset: $asset"
+
+          gh release download $env:DXC_VERSION `
+            --repo microsoft/DirectXShaderCompiler `
+            --pattern $asset `
+            --dir dxc
+
+          New-Item -ItemType Directory -Force -Path dist/albite | Out-Null
+          Expand-Archive -Path "dxc/$asset" -DestinationPath dxc/extracted -Force
+
+          $compiler = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxcompiler.dll | Select-Object -First 1
+          $validator = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxil.dll | Select-Object -First 1
+
+          if (-not $compiler) {
+            throw 'dxcompiler.dll was not found in the DXC package.'
+          }
+          if (-not $validator) {
+            throw 'dxil.dll was not found in the DXC package.'
+          }
+
+          Copy-Item $compiler.FullName dist/albite/dxcompiler.dll
+          Copy-Item $validator.FullName dist/albite/dxil.dll
+
+          $license = Get-ChildItem -Path dxc/extracted -Recurse -File |
+            Where-Object { $_.Name -like 'LICENSE*' } |
+            Select-Object -First 1
+
+          if ($license) {
+            Copy-Item $license.FullName dist/albite/LICENSE-DXC.txt
+          }
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          binary="target/${{ matrix.target }}/release/albite"
+          cp "$binary" dist/albite/albite
+
+          tar -C dist -czf "dist/${{ matrix.archive }}" albite
+          ls -lh "dist/${{ matrix.archive }}"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item `
+            "target\${{ matrix.target }}\release\albite.exe" `
+            "dist\albite\albite.exe"
+
+          Compress-Archive `
+            -Path "dist\albite\*" `
+            -DestinationPath "dist\${{ matrix.archive }}" `
+            -Force
+
+          Get-Item "dist\${{ matrix.archive }}" | Format-List Name, Length
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Show release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist -maxdepth 2 -type f -print
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/*
