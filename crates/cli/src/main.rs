@@ -1,4 +1,5 @@
 use albite_core::options::*;
+use albite_core::prepare_spirv::{TranspileTarget, preprocess_src};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -40,6 +41,26 @@ fn run(options: &Options) -> Result<(), String> {
         .map_err(|e| format!("reading {}: {e}", options.input_file_path.display()))?;
 
     let profile_lower = options.profile.to_ascii_lowercase();
+
+    if options.preprocess_only {
+        let target = match profile_lower.as_str() {
+            "msl" => TranspileTarget::Msl,
+            "s_6_5" | "s_6_0" => TranspileTarget::Hlsl,
+            _ => TranspileTarget::Glsl,
+        };
+        let text = preprocess_src(options, &source, target).map_err(|e| e.to_string())?;
+        if options.output_file_path.as_os_str().is_empty() {
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(text.as_bytes())
+                .map_err(|e| format!("writing to stdout: {e}"))?;
+        } else {
+            std::fs::write(&options.output_file_path, text)
+                .map_err(|e| format!("writing {}: {e}", options.output_file_path.display()))?;
+        }
+        return Ok(());
+    }
+
     let (bytes, source_text, backend_name) = match profile_lower.as_str() {
         "msl" => {
             let compiled = albite_msl::compile(options, &source).map_err(|e| e.to_string())?;
@@ -112,6 +133,9 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             "--verbose" => {
                 options.verbose = true;
             }
+            "-E" | "--preprocess-only" => {
+                options.preprocess_only = true;
+            }
             other => return Err(format!("unrecognized argument: {other}")),
         }
 
@@ -121,7 +145,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     if options.input_file_path.as_os_str().is_empty() {
         return Err("input file is required (-f <INPUT>)".into());
     }
-    if options.output_file_path.as_os_str().is_empty() {
+    if options.output_file_path.as_os_str().is_empty() && !options.preprocess_only {
         return Err("output file is required (-o <INPUT>)".into());
     }
     if options.profile.is_empty() {
@@ -171,6 +195,8 @@ OPTIONS:
     -O2                         Optimize for performance (default)
 
     --verbose                   Print the cross-compiled shader to stdout
+    -E, --preprocess-only       Only run the preprocessor and print the expanded
+                                source (to stdout, or to -o if given)
     -h, --help                  Show this help
     -v, --version               Show version information
 "

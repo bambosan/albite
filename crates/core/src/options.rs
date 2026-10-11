@@ -94,6 +94,7 @@ pub struct Options {
     pub defines: Vec<(String, Option<String>)>,
     pub optimization: OptimizationLevel,
     pub verbose: bool,
+    pub preprocess_only: bool,
 }
 
 impl Options {

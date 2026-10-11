@@ -25,14 +25,12 @@ pub struct PreparedSPIRV {
     pub spirv_words: Vec<u32>,
 }
 
-pub fn compile_src_to_spirv(
+fn make_compile_options(
     options: &Options,
-    source: &str,
     target: TranspileTarget,
-) -> Result<PreparedSPIRV, PrepareError> {
+) -> Result<shaderc::CompileOptions<'static>, PrepareError> {
     let stage = options.shader_type;
 
-    let compiler = shaderc::Compiler::new()?;
     let mut copts = shaderc::CompileOptions::new()?;
 
     copts.set_source_language(shaderc::SourceLanguage::GLSL);
@@ -51,11 +49,11 @@ pub fn compile_src_to_spirv(
     copts.set_auto_bind_uniforms(true);
     copts.set_auto_map_locations(true);
 
+    copts.set_generate_debug_info();
+
     if target == TranspileTarget::Hlsl {
         copts.set_hlsl_offsets(true);
     }
-
-    copts.set_generate_debug_info();
 
     for (name, value) in [target.defines()] {
         copts.add_macro_definition(name, value);
@@ -82,12 +80,42 @@ pub fn compile_src_to_spirv(
         }
     });
 
-    let filename = options
+    Ok(copts)
+}
+
+fn input_filename(options: &Options) -> String {
+    options
         .input_file_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or_default()
-        .to_string();
+        .to_string()
+}
+
+pub fn preprocess_src(
+    options: &Options,
+    source: &str,
+    target: TranspileTarget,
+) -> Result<String, PrepareError> {
+    let compiler = shaderc::Compiler::new()?;
+    let copts = make_compile_options(options, target)?;
+    let filename = input_filename(options);
+
+    Ok(compiler
+        .preprocess(source, &filename, "main", Some(&copts))?
+        .as_text())
+}
+
+pub fn compile_src_to_spirv(
+    options: &Options,
+    source: &str,
+    target: TranspileTarget,
+) -> Result<PreparedSPIRV, PrepareError> {
+    let stage = options.shader_type;
+
+    let compiler = shaderc::Compiler::new()?;
+    let copts = make_compile_options(options, target)?;
+    let filename = input_filename(options);
 
     let preprocessed = compiler
         .preprocess(source, &filename, "main", Some(&copts))?

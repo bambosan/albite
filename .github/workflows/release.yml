@@ -252,7 +252,7 @@ jobs:
             "dist\albite\albite.exe"
 
           Compress-Archive `
-            -Path "dist\albite\*" `
+            -Path "dist\albite" `
             -DestinationPath "dist\${{ matrix.archive }}" `
             -Force
 
