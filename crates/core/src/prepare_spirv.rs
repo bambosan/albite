@@ -25,6 +25,68 @@ pub struct PreparedSPIRV {
     pub spirv_words: Vec<u32>,
 }
 
+pub struct Preprocessor {
+    compiler: shaderc::Compiler,
+}
+
+impl Preprocessor {
+    pub fn new() -> Result<Self, PrepareError> {
+        Ok(Self {
+            compiler: shaderc::Compiler::new()?,
+        })
+    }
+
+    pub fn run(
+        &self,
+        options: &Options,
+        source: &str,
+        target: TranspileTarget,
+    ) -> Result<String, PrepareError> {
+        let copts = make_compile_options(options, target)?;
+        let filename = input_filename(options);
+
+        Ok(self
+            .compiler
+            .preprocess(source, &filename, "main", Some(&copts))?
+            .as_text())
+    }
+}
+
+pub fn compile_src_to_spirv(
+    options: &Options,
+    source: &str,
+    target: TranspileTarget,
+) -> Result<PreparedSPIRV, PrepareError> {
+    let stage = options.shader_type;
+
+    let compiler = shaderc::Compiler::new()?;
+    let copts = make_compile_options(options, target)?;
+    let filename = input_filename(options);
+
+    let preprocessed = compiler
+        .preprocess(source, &filename, "main", Some(&copts))?
+        .as_text();
+
+    let artifact = compiler.compile_into_spirv(
+        &preprocessed,
+        stage.shaderc_kind(),
+        &filename,
+        "main",
+        Some(&copts),
+    )?;
+
+    let spirv_words = artifact.as_binary().to_vec();
+
+    let io = reflect_io(&spirv_words, stage)?;
+
+    Ok(PreparedSPIRV {
+        filename,
+        expanded: preprocessed,
+        io,
+        spirv_words,
+    })
+}
+
 fn make_compile_options(
     options: &Options,
     target: TranspileTarget,
@@ -90,55 +152,6 @@ fn input_filename(options: &Options) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or_default()
         .to_string()
-}
-
-pub fn preprocess_src(
-    options: &Options,
-    source: &str,
-    target: TranspileTarget,
-) -> Result<String, PrepareError> {
-    let compiler = shaderc::Compiler::new()?;
-    let copts = make_compile_options(options, target)?;
-    let filename = input_filename(options);
-
-    Ok(compiler
-        .preprocess(source, &filename, "main", Some(&copts))?
-        .as_text())
-}
-
-pub fn compile_src_to_spirv(
-    options: &Options,
-    source: &str,
-    target: TranspileTarget,
-) -> Result<PreparedSPIRV, PrepareError> {
-    let stage = options.shader_type;
-
-    let compiler = shaderc::Compiler::new()?;
-    let copts = make_compile_options(options, target)?;
-    let filename = input_filename(options);
-
-    let preprocessed = compiler
-        .preprocess(source, &filename, "main", Some(&copts))?
-        .as_text();
-
-    let artifact = compiler.compile_into_spirv(
-        &preprocessed,
-        stage.shaderc_kind(),
-        &filename,
-        "main",
-        Some(&copts),
-    )?;
-
-    let spirv_words = artifact.as_binary().to_vec();
-
-    let io = reflect_io(&spirv_words, stage)?;
-
-    Ok(PreparedSPIRV {
-        filename,
-        expanded: preprocessed,
-        io,
-        spirv_words,
-    })
 }
 
 fn include_search_dirs(options: &Options) -> Vec<PathBuf> {

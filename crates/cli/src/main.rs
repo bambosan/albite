@@ -1,5 +1,5 @@
 use albite_core::options::*;
-use albite_core::prepare_spirv::{TranspileTarget, preprocess_src};
+use albite_core::prepare_spirv::{Preprocessor, TranspileTarget};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -16,6 +16,10 @@ fn main() -> ExitCode {
     if args.iter().any(|arg| arg == "-v" || arg == "--version") {
         print_version();
         return ExitCode::SUCCESS;
+    }
+
+    if args.iter().any(|arg| arg == "--batch-preprocess") {
+        return run_batch_preprocess();
     }
 
     let options = match parse_args(&args) {
@@ -43,12 +47,10 @@ fn run(options: &Options) -> Result<(), String> {
     let profile_lower = options.profile.to_ascii_lowercase();
 
     if options.preprocess_only {
-        let target = match profile_lower.as_str() {
-            "msl" => TranspileTarget::Msl,
-            "s_6_5" | "s_6_0" => TranspileTarget::Hlsl,
-            _ => TranspileTarget::Glsl,
-        };
-        let text = preprocess_src(options, &source, target).map_err(|e| e.to_string())?;
+        let target = transpile_target(&profile_lower);
+        let text = Preprocessor::new()
+            .and_then(|preprocessor| preprocessor.run(options, &source, target))
+            .map_err(|e| e.to_string())?;
         if options.output_file_path.as_os_str().is_empty() {
             use std::io::Write;
             std::io::stdout()
@@ -91,6 +93,79 @@ fn run(options: &Options) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn transpile_target(profile_lower: &str) -> TranspileTarget {
+    match profile_lower {
+        "msl" => TranspileTarget::Msl,
+        "s_6_5" | "s_6_0" => TranspileTarget::Hlsl,
+        _ => TranspileTarget::Glsl,
+    }
+}
+
+fn run_batch_preprocess() -> ExitCode {
+    use std::io::{BufRead, Write};
+
+    let preprocessor = match Preprocessor::new() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    let mut request: Vec<String> = Vec::new();
+
+    let lines = stdin.lock().lines().map(Some).chain(std::iter::once(None));
+    for line in lines {
+        let at_eof = line.is_none();
+        match line {
+            Some(Ok(text)) if !text.is_empty() => {
+                request.push(text);
+                continue;
+            }
+            Some(Err(_)) => break,
+            _ => {}
+        }
+
+        if !request.is_empty() {
+            let (tag, body) = match batch_preprocess_one(&preprocessor, &request) {
+                Ok(text) => ("OK", text),
+                Err(message) => ("ERR", message),
+            };
+            request.clear();
+
+            let wrote = write!(out, "{tag} {}\n", body.len())
+                .and_then(|_| out.write_all(body.as_bytes()))
+                .and_then(|_| out.flush());
+            if wrote.is_err() {
+                return ExitCode::FAILURE;
+            }
+        }
+
+        if at_eof {
+            break;
+        }
+    }
+
+    ExitCode::SUCCESS
+}
+
+fn batch_preprocess_one(preprocessor: &Preprocessor, request: &[String]) -> Result<String, String> {
+    let mut args = request.to_vec();
+    args.push("-E".to_string());
+    let options = parse_args(&args)?;
+
+    let source = std::fs::read_to_string(&options.input_file_path)
+        .map_err(|e| format!("reading {}: {e}", options.input_file_path.display()))?;
+    let target = transpile_target(&options.profile.to_ascii_lowercase());
+
+    preprocessor
+        .run(&options, &source, target)
+        .map_err(|e| e.to_string())
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -197,6 +272,10 @@ OPTIONS:
     --verbose                   Print the cross-compiled shader to stdout
     -E, --preprocess-only       Only run the preprocessor and print the expanded
                                 source (to stdout, or to -o if given)
+    --batch-preprocess          Serve many -E requests from one process: read each
+                                request from stdin (one argument per line, ended by
+                                an empty line) and answer 'OK <n>' / 'ERR <n>'
+                                followed by <n> bytes. Avoids per-process start-up
     -h, --help                  Show this help
     -v, --version               Show version information
 "

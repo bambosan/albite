@@ -2,54 +2,45 @@
 
 Albite is a shader compiler for [Lazurite](https://veka0.github.io/lazurite/), specialized for compiling Minecraft Bedrock shader projects. It takes GLSL source code, compiles it to SPIR-V, cross-compiles it to the selected backend, and stores the result in a small binary container.
 
-Supported output profiles:
-
-- `310_es` -> GLSL ES 3.10
-- `msl` -> Metal Shading Language (iOS target)
-- `s_6_0` -> DXIL / Shader Model 6.0
-- `s_6_5` -> DXIL / Shader Model 6.5
-
-## Prebuilt Binaries
-
-See the latest packages on the [GitHub Releases page](../../releases).
-
-## Usage
-
 ```text
-albite -f <INPUT> -o <OUTPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
-```
+USAGE:
+    albite -f <INPUT> -o <OUTPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
 
-Example:
+EXAMPLE:
+    albite -f shader.vert -o shader.bin --type v -p 310_es
 
-```bash
-albite -f shader.vert -o shader.bin --type v -p 310_es
-```
+REQUIRED:
+    -f, --file <INPUT>          Input GLSL shader file
+    -o, --output <OUTPUT>       Output binary
+    -t, --type <TYPE>           v = vertex, f = fragment, c = compute
+    -p, --profile <PROFILE>     Target profile: 310_es, msl, s_6_0, s_6_5
 
-Required options:
+OPTIONS:
+    -i, --include <DIR>         Add an include search directory
+    -d, --define <DEFINES>      NAME or NAME=VALUE; separate multiple with ';'
 
-```text
--f, --file <INPUT>          Input GLSL shader file
--o, --output <OUTPUT>       Output binary container
--t, --type <TYPE>           v = vertex, f = fragment, c = compute
--p, --profile <PROFILE>     310_es, msl, s_6_0, s_6_5
+    -O0                         Disable optimization
+    -O1                         Optimize for size
+    -O2                         Optimize for performance (default)
+
+    --verbose                   Print the cross-compiled shader to stdout
+    -E, --preprocess-only       Only run the preprocessor and print the expanded
+                                source (to stdout, or to -o if given)
+    --batch-preprocess          Serve many -E requests from one process: read each
+                                request from stdin (one argument per line, ended by
+                                an empty line) and answer 'OK <n>' / 'ERR <n>'
+                                followed by <n> bytes. Avoids per-process start-up
+    -h, --help                  Show this help
+    -v, --version               Show version information
 ```
 
 Profile names are case-insensitive. `msl`, `s_6_0` and `s_6_5` select the Metal and DXIL backends; **any other value falls back to GLSL ES 3.10**, so a mistyped profile is not rejected.
 
-Other options:
+`-O0`, `-O1` and `-O2` control the GLSL -> SPIR-V optimization step. For DXIL output, the final HLSL -> DXIL step always runs DXC with `-O0`, regardless of this flag. With `--verbose`, DXIL output prints the HLSL source.
 
-```text
--i, --include <DIR>         Add an include search directory
--d, --define <DEFINES>      NAME or NAME=VALUE; separate multiple values with ';'
--O0                         Disable optimization
--O1                         Optimize for size
--O2                         Optimize for performance (default)
---verbose                   Print the cross-compiled shader source
--h, --help                  Show help
--v, --version               Show version information
-```
+## Prebuilt Binaries
 
-`-O0`, `-O1` and `-O2` control the GLSL -> SPIR-V optimization step (shaderc). For DXIL output, the final HLSL -> DXIL step always runs DXC with `-O0`, regardless of this flag. With `--verbose`, DXIL output prints the HLSL source.
+See the latest packages on the [GitHub Releases page](../../releases).
 
 ## GLSL
 
