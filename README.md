@@ -55,13 +55,13 @@ Other options:
 
 GLSL source code compiled by shaderc, each compile is doing validation (can't turned off), and using the OpenGL 4.5 target environment. Write normal GLSL with a `#version` line and a `main` entry point.
 
-- Use plain (loose) uniforms. For `msl`, `s_6_0` and `s_6_5`, Albite packs them into one uniform buffer with std140 layout. Samplers and storage images stay as separate resources and are not packed.
+- Use plain (loose) uniforms. For `msl`, `s_6_0` and `s_6_5`, Albite packs them into one uniform buffer with std140 layout, samplers and storage images stay as separate resources and are not packed.
 - Uniform bindings and input/output locations are assigned automatically, so explicit `binding` or `location` qualifiers are optional but recommended.
 - For `310_es`, cube map arrays automatically enable `GL_EXT_texture_cube_map_array`.
 
 ### Vertex Inputs
 
-The vertex input is restricted to what is defined by bgfx, which is used by the RenderDragon graphics engine. Any other name return error.
+Vertex input is restricted to what is defined by bgfx, which is used by the RenderDragon graphics engine. Any other name return error.
 
 ```text
 a_position, a_normal, a_tangent, a_bitangent, a_indices, a_weight
