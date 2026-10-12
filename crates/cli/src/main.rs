@@ -78,18 +78,32 @@ fn run(options: &Options) -> Result<(), String> {
         }
     };
 
-    std::fs::write(&options.output_file_path, &bytes)
-        .map_err(|e| format!("writing {}: {e}", options.output_file_path.display()))?;
+    let to_stdout = options.output_file_path.as_os_str().is_empty();
+
+    if to_stdout {
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(&bytes)
+            .and_then(|_| stdout.flush())
+            .map_err(|e| format!("writing to stdout: {e}"))?;
+    } else {
+        std::fs::write(&options.output_file_path, &bytes)
+            .map_err(|e| format!("writing {}: {e}", options.output_file_path.display()))?;
+    }
 
     if options.verbose {
         let shader_type = options.shader_type;
-        println!(
-            "------ wrote {} bytes to {}",
-            bytes.len(),
-            options.output_file_path.display()
+        let destination = if to_stdout {
+            "stdout".to_string()
+        } else {
+            options.output_file_path.display().to_string()
+        };
+        let report = format!(
+            "------ wrote {} bytes to {destination}\n------ {backend_name} (stage: {shader_type:?})\n{source_text}",
+            bytes.len()
         );
-        println!("------ {backend_name} (stage: {shader_type:?})");
-        println!("{source_text}");
+        eprintln!("{report}");
     }
 
     Ok(())
@@ -220,9 +234,6 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
     if options.input_file_path.as_os_str().is_empty() {
         return Err("input file is required (-f <INPUT>)".into());
     }
-    if options.output_file_path.as_os_str().is_empty() && !options.preprocess_only {
-        return Err("output file is required (-o <INPUT>)".into());
-    }
     if options.profile.is_empty() {
         return Err("profile is required (-p <PROFILE> or --profile <PROFILE>)".into());
     }
@@ -250,18 +261,19 @@ fn print_help() {
     println!(
         "\
 USAGE:
-    albite -f <INPUT> -o <OUTPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
+    albite -f <INPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
 
 EXAMPLE:
-    albite -f shader.vert -o shader.bin --type v -p 310_es
+    albite -f shader.vert --type v -p 310_es
+    albite -f shader.vert --type v -p 310_es -o shader.bin
 
 REQUIRED:
     -f, --file <INPUT>          Input GLSL shader file
-    -o, --output <OUTPUT>       Output binary
     -t, --type <TYPE>           v = vertex, f = fragment, c = compute
     -p, --profile <PROFILE>     Target profile: 310_es, msl, s_6_0, s_6_5
 
 OPTIONS:
+    -o, --output <OUTPUT>       Write the output to a file instead of stdout
     -i, --include <DIR>         Add an include search directory
     -d, --define <DEFINES>      NAME or NAME=VALUE; separate multiple with ';'
 
@@ -269,9 +281,9 @@ OPTIONS:
     -O1                         Optimize for size
     -O2                         Optimize for performance (default)
 
-    --verbose                   Print the cross-compiled shader to stdout
+    --verbose                   Print the cross-compiled shader to stderr
     -E, --preprocess-only       Only run the preprocessor and print the expanded
-                                source (to stdout, or to -o if given)
+                                source
     --batch-preprocess          Serve many -E requests from one process: read each
                                 request from stdin (one argument per line, ended by
                                 an empty line) and answer 'OK <n>' / 'ERR <n>'

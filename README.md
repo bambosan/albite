@@ -4,18 +4,19 @@ Albite is a shader compiler for [Lazurite](https://veka0.github.io/lazurite/), s
 
 ```text
 USAGE:
-    albite -f <INPUT> -o <OUTPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
+    albite -f <INPUT> --type <TYPE> -p <PROFILE> [OPTIONS]
 
 EXAMPLE:
-    albite -f shader.vert -o shader.bin --type v -p 310_es
+    albite -f shader.vert --type v -p 310_es
+    albite -f shader.vert --type v -p 310_es -o shader.bin
 
 REQUIRED:
     -f, --file <INPUT>          Input GLSL shader file
-    -o, --output <OUTPUT>       Output binary
     -t, --type <TYPE>           v = vertex, f = fragment, c = compute
     -p, --profile <PROFILE>     Target profile: 310_es, msl, s_6_0, s_6_5
 
 OPTIONS:
+    -o, --output <OUTPUT>       Write the output to a file instead of stdout
     -i, --include <DIR>         Add an include search directory
     -d, --define <DEFINES>      NAME or NAME=VALUE; separate multiple with ';'
 
@@ -23,9 +24,9 @@ OPTIONS:
     -O1                         Optimize for size
     -O2                         Optimize for performance (default)
 
-    --verbose                   Print the cross-compiled shader to stdout
+    --verbose                   Print the cross-compiled shader to stderr
     -E, --preprocess-only       Only run the preprocessor and print the expanded
-                                source (to stdout, or to -o if given)
+                                source
     --batch-preprocess          Serve many -E requests from one process: read each
                                 request from stdin (one argument per line, ended by
                                 an empty line) and answer 'OK <n>' / 'ERR <n>'
