@@ -210,8 +210,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/albite | Out-Null
           Expand-Archive -Path "dxc/$asset" -DestinationPath dxc/extracted -Force
 
-          $compiler = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxcompiler.dll | Select-Object -First 1
-          $validator = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxil.dll | Select-Object -First 1
+          $compiler = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxcompiler.dll |
+            Where-Object { $_.FullName -match '[\\/]bin[\\/]x64[\\/]' } | Select-Object -First 1
+          $validator = Get-ChildItem -Path dxc/extracted -Recurse -File -Filter dxil.dll |
+            Where-Object { $_.FullName -match '[\\/]bin[\\/]x64[\\/]' } | Select-Object -First 1
 
           if (-not $compiler) {
             throw 'dxcompiler.dll was not found in the DXC package.'
